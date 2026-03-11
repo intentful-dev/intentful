@@ -7,9 +7,11 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from pydantic import BaseModel
+
 from intentful.backends import LLMBackend
 from intentful.backends.anthropic import AnthropicBackend
-from intentful.core.registry import get_registry
+from intentful.core.registry import IntentEntry, get_registry
 from intentful.core.schemas import IntentRequest, IntentResponse
 from intentful.execution.auditor import AuditEntry, Auditor
 from intentful.routing.middleware import IntentMiddleware
@@ -156,7 +158,7 @@ class IntentRouter(APIRouter):
                 audit_id = self.auditor.record(audit_entry)
 
             try:
-                result = await entry.handler(**resolution.payload)
+                result = await _call_handler(entry, resolution.payload)
 
                 if self.auditor and audit_id:
                     audit = self.auditor.get(audit_id)
@@ -187,6 +189,14 @@ class IntentRouter(APIRouter):
                         audit_id=audit_id,
                     ).model_dump(),
                 )
+
+
+async def _call_handler(entry: IntentEntry, payload: dict) -> Any:
+    """Chama o handler do endpoint, instanciando o schema Pydantic se necessário."""
+    if entry.payload_model is not None:
+        model_instance = entry.payload_model(**payload)
+        return await entry.handler(model_instance)
+    return await entry.handler(**payload)
 
 
 def _create_backend(name: str) -> LLMBackend:

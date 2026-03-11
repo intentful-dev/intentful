@@ -17,6 +17,7 @@ class IntentEntry:
     context: IntentContext
     handler: Callable[..., Any]
     payload_schema: dict[str, Any] | None = None
+    payload_model: Any | None = None
     tags: list[str] = field(default_factory=list)
 
     def to_prompt_context(self) -> dict[str, Any]:

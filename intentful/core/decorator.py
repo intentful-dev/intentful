@@ -11,14 +11,26 @@ from intentful.core.context import IntentContext
 from intentful.core.registry import IntentEntry, get_registry
 
 
-def _extract_payload_schema(handler: Callable[..., Any]) -> dict[str, Any] | None:
-    """Extrai o JSON Schema do primeiro parâmetro Pydantic do handler."""
+def _extract_payload_info(
+    handler: Callable[..., Any],
+) -> tuple[dict[str, Any] | None, type | None]:
+    """Extrai o JSON Schema e a classe Pydantic do primeiro parâmetro do handler."""
     sig = inspect.signature(handler)
     for param in sig.parameters.values():
         annotation = param.annotation
         if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            return annotation.model_json_schema()
-    return None
+            return annotation.model_json_schema(), annotation
+    # Fallback: tentar resolver anotações string (from __future__ import annotations)
+    try:
+        import typing
+
+        hints = typing.get_type_hints(handler)
+        for hint in hints.values():
+            if isinstance(hint, type) and issubclass(hint, BaseModel):
+                return hint.model_json_schema(), hint
+    except Exception:
+        pass
+    return None, None
 
 
 def intent(
@@ -44,7 +56,7 @@ def intent(
         context = IntentContext()
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        payload_schema = _extract_payload_schema(func)
+        payload_schema, payload_model = _extract_payload_info(func)
 
         entry = IntentEntry(
             endpoint_path=path or _infer_path(func),
@@ -53,6 +65,7 @@ def intent(
             context=context,
             handler=func,
             payload_schema=payload_schema,
+            payload_model=payload_model,
             tags=tags or context.tags,
         )
 

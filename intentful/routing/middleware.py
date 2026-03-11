@@ -30,6 +30,10 @@ class IntentMiddleware(BaseHTTPMiddleware):
         if request.method not in ("POST", "PUT", "PATCH"):
             return await call_next(request)
 
+        # O endpoint /intent já trata resolução internamente
+        if request.url.path.rstrip("/").endswith("/intent"):
+            return await call_next(request)
+
         try:
             body = await request.body()
             if not body:
