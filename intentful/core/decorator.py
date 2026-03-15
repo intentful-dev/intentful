@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from intentful.core.context import IntentContext
 from intentful.core.registry import IntentEntry, get_registry
+from intentful.core.schemas import LookupConfig
 
 
 def _extract_payload_info(
@@ -40,6 +41,7 @@ def intent(
     method: str = "POST",
     path: str | None = None,
     tags: list[str] | None = None,
+    lookups: dict[str, LookupConfig] | None = None,
 ) -> Callable:
     """Decorator que anota um endpoint FastAPI com contexto semântico.
 
@@ -67,6 +69,7 @@ def intent(
             payload_schema=payload_schema,
             payload_model=payload_model,
             tags=tags or context.tags,
+            lookups=lookups or {},
         )
 
         get_registry().register(entry)

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from intentful.core.context import IntentContext
+from intentful.core.schemas import LookupConfig
 
 
 @dataclass
@@ -19,10 +20,11 @@ class IntentEntry:
     payload_schema: dict[str, Any] | None = None
     payload_model: Any | None = None
     tags: list[str] = field(default_factory=list)
+    lookups: dict[str, LookupConfig] = field(default_factory=dict)
 
     def to_prompt_context(self) -> dict[str, Any]:
         """Serializa esta entry para ser enviada ao LLM como contexto."""
-        return {
+        ctx: dict[str, Any] = {
             "endpoint": self.endpoint_path,
             "method": self.method,
             "description": self.description,
@@ -32,6 +34,12 @@ class IntentEntry:
             "examples": self.context.examples,
             "payload_schema": self.payload_schema,
         }
+        if self.lookups:
+            ctx["resolvable_params"] = {
+                param: {"search_fields": cfg.search_fields}
+                for param, cfg in self.lookups.items()
+            }
+        return ctx
 
 
 class IntentRegistry:

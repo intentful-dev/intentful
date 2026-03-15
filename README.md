@@ -85,9 +85,101 @@ curl -X POST http://localhost:8000/intent \
   -d '{"prompt": "Create classes for Engineering in 2025/26", "dry_run": true}'
 ```
 
+## Two-Step Lookup Resolution
+
+### The problem
+
+REST endpoints use identifiers (IDs) in paths — `DELETE /orders/abc-456`. But natural language prompts use descriptions — *"delete João's order from yesterday"*. The LLM doesn't have access to your database and can't know the real ID. If it tries, it hallucinates.
+
+### The solution
+
+Instead of trying to resolve everything in one step, intentful splits the process:
+
+1. **Step 1 — Identify intent**: The LLM picks the right endpoint and extracts search hints from the prompt (e.g. `customer_name: "João"`, `created_at: "2026-03-14"`) — but never invents an ID.
+2. **Step 2 — Resolve references**: The system uses your actual models/database to look up candidates matching those hints, then either auto-resolves (1 match), asks the user to choose (N matches), or returns an error (0 matches).
+
+```text
+User: "delete João's order from yesterday"
+        │
+        ▼
+   ┌─────────┐
+   │ Step 1  │  LLM → identifies endpoint + extracts search hints
+   └────┬────┘
+        │  endpoint: DELETE /orders/{order_id}
+        │  lookup_hints: {customer_name: "João", created_at: "2026-03-14"}
+        ▼
+   ┌─────────┐
+   │ Step 2  │  System → queries your DB/model with the hints
+   └────┬────┘
+        │  found: order_id = "abc-456"
+        ▼
+   ┌─────────┐
+   │ Confirm │  "Delete order abc-456 (João, €45)?"
+   └────┬────┘
+        │  user confirms
+        ▼
+   DELETE /orders/abc-456
+```
+
+### Usage
+
+Define a `resolver_fn` that queries your data source and pass it via `LookupConfig`:
+
+```python
+from intentful import intent, IntentContext, LookupConfig
+
+# Your lookup function — queries the real database
+async def search_orders(hints: dict) -> list[dict]:
+    query = db.query(Order)
+    if "customer_name" in hints:
+        query = query.filter(Order.customer_name.ilike(f"%{hints['customer_name']}%"))
+    if "created_at" in hints:
+        query = query.filter(Order.created_at == hints["created_at"])
+    return [{"id": o.id, "customer_name": o.customer_name, "total": o.total}
+            for o in await query.all()]
+
+@router.delete("/orders/{order_id}")
+@intent(
+    description="Delete an order",
+    context=IntentContext(
+        allowed_operations=["DELETE"],
+        requires_confirmation=True,
+    ),
+    method="DELETE",
+    path="/orders/{order_id}",
+    lookups={
+        "order_id": LookupConfig(
+            search_fields=["customer_name", "created_at", "description"],
+            resolver_fn=search_orders,
+            id_field="id",
+            display_fields=["customer_name", "total"],
+        )
+    },
+)
+async def delete_order(order_id: str):
+    ...
+```
+
+The `LookupConfig` parameters:
+
+| Parameter | Description |
+| --- | --- |
+| `search_fields` | Fields the LLM can use as search hints (shown in the prompt context) |
+| `resolver_fn` | Async function that receives hints and returns a list of dicts |
+| `id_field` | Which field in the result contains the ID (default: `"id"`) |
+| `display_fields` | Fields to show the user when confirming or choosing between candidates |
+
+### Resolution outcomes
+
+| Result | Behaviour |
+| --- | --- |
+| **1 match** | Auto-resolves the parameter and continues to execution/confirmation |
+| **N matches** | Returns candidates to the client with `lookup_results` for the user to choose |
+| **0 matches** | Returns a 404 error explaining the parameter couldn't be resolved |
+
 ## How It Works
 
-```
+```text
 1. Request arrives with "prompt" field
         ↓
 2. IntentMiddleware intercepts (or /intent endpoint receives)
@@ -97,19 +189,22 @@ curl -X POST http://localhost:8000/intent \
         ↓
 4. LLM receives: prompt + available endpoints + business rules + schemas
         ↓
-5. LLM returns: { endpoint, payload, confidence, estimated_impact }
+5. LLM returns: { endpoint, payload, confidence, lookup_hints }
         ↓
-6. Validator checks: valid schema? allowed operations? needs confirmation?
+6. Lookup Resolver: resolves hints against real data (if needed)
         ↓
-7. If confirmed → executes the endpoint normally
+7. Validator checks: valid schema? allowed operations? needs confirmation?
         ↓
-8. Auditor logs: original prompt, generated payload, user, timestamp, result
+8. If confirmed → executes the endpoint normally
+        ↓
+9. Auditor logs: original prompt, generated payload, user, timestamp, result
 ```
 
 ## Features
 
 - **`@intent` decorator** — annotate any FastAPI endpoint with semantic context
 - **`IntentRouter`** — drop-in replacement for `APIRouter` with intent support
+- **Two-step lookup resolution** — resolve natural language references to real IDs via your models
 - **Dual-mode endpoints** — structured payloads and natural language on the same route
 - **Confirmation flow** — require user confirmation for high-impact operations
 - **Dry-run mode** — simulate operations without executing

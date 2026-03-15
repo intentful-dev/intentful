@@ -16,6 +16,7 @@ from intentful.core.schemas import IntentRequest, IntentResponse
 from intentful.execution.auditor import AuditEntry, Auditor
 from intentful.routing.middleware import IntentMiddleware
 from intentful.routing.resolver import LLMResolver
+from intentful.routing.lookup import apply_resolved_params, needs_lookup, resolve_lookups
 from intentful.routing.validator import validate_resolution
 
 
@@ -121,6 +122,45 @@ class IntentRouter(APIRouter):
                         error="Validação falhou: " + "; ".join(validation.errors),
                     ).model_dump(),
                 )
+
+            # --- Two-step lookup resolution ---
+            if needs_lookup(resolution, entry):
+                lookup_results = await resolve_lookups(resolution, entry)
+
+                # Verificar se há candidatos ambíguos ou vazios
+                for param_name, candidates in lookup_results.items():
+                    if len(candidates) == 0:
+                        return JSONResponse(
+                            status_code=404,
+                            content=IntentResponse(
+                                success=False,
+                                resolution=resolution,
+                                error=f"Não foi possível resolver '{param_name}': nenhum resultado encontrado.",
+                                lookup_results=lookup_results,
+                            ).model_dump(),
+                        )
+
+                    if len(candidates) > 1:
+                        # Múltiplos candidatos — devolver para o utilizador escolher
+                        return JSONResponse(
+                            content=IntentResponse(
+                                success=True,
+                                resolution=resolution,
+                                confirmation_required=True,
+                                confirmation_message=(
+                                    f"Foram encontrados {len(candidates)} resultados "
+                                    f"para '{param_name}'. Selecione o correcto."
+                                ),
+                                lookup_results=lookup_results,
+                            ).model_dump(),
+                        )
+
+                # Exactamente 1 candidato por param — resolver automaticamente
+                resolved_params = {
+                    param_name: candidates[0].id_value
+                    for param_name, candidates in lookup_results.items()
+                }
+                resolution = apply_resolved_params(resolution, resolved_params)
 
             # Modo dry_run — só mostra o que faria
             if intent_request.dry_run:
