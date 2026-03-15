@@ -24,6 +24,7 @@ class OllamaBackend(LLMBackend):
             json={
                 "model": self.model,
                 "stream": False,
+                "format": "json",
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},

@@ -23,14 +23,13 @@ def validate_resolution(resolution: IntentResolution, entry: IntentEntry) -> Val
     if resolution.method.upper() not in _method_to_operations(resolution.method):
         pass  # O método HTTP é válido por si só
 
-    # Verificar se as operações estão dentro das permitidas
+    # Verificar se pelo menos uma operação implícita está permitida
     implied_ops = _method_to_operations(resolution.method)
-    for op in implied_ops:
-        if op not in entry.context.allowed_operations:
-            errors.append(
-                f"Operação '{op}' não permitida. "
-                f"Permitidas: {entry.context.allowed_operations}"
-            )
+    if not any(op in entry.context.allowed_operations for op in implied_ops):
+        errors.append(
+            f"Nenhuma operação implícita ({implied_ops}) é permitida. "
+            f"Permitidas: {entry.context.allowed_operations}"
+        )
 
     # Validar payload contra o schema Pydantic se disponível
     if entry.payload_schema and resolution.payload:
@@ -44,7 +43,7 @@ def _method_to_operations(method: str) -> list[str]:
     """Mapeia método HTTP para tipos de operação."""
     mapping = {
         "GET": ["READ"],
-        "POST": ["CREATE"],
+        "POST": ["CREATE", "READ"],
         "PUT": ["UPDATE"],
         "PATCH": ["UPDATE"],
         "DELETE": ["DELETE"],
