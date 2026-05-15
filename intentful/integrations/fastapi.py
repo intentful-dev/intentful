@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from intentful.backends import LLMBackend
 from intentful.backends.anthropic import AnthropicBackend
@@ -16,7 +16,7 @@ from intentful.core.schemas import IntentRequest, IntentResponse
 from intentful.execution.auditor import AuditEntry, Auditor
 from intentful.routing.middleware import IntentMiddleware
 from intentful.routing.resolver import LLMResolver
-from intentful.routing.lookup import apply_resolved_params, needs_lookup, resolve_lookups
+from intentful.routing.lookup import LookupError, apply_resolved_params, needs_lookup, resolve_lookups
 from intentful.routing.validator import validate_resolution
 
 
@@ -125,7 +125,17 @@ class IntentRouter(APIRouter):
 
             # --- Two-step lookup resolution ---
             if needs_lookup(resolution, entry):
-                lookup_results = await resolve_lookups(resolution, entry)
+                try:
+                    lookup_results = await resolve_lookups(resolution, entry)
+                except LookupError as e:
+                    return JSONResponse(
+                        status_code=502,
+                        content=IntentResponse(
+                            success=False,
+                            resolution=resolution,
+                            error=f"Erro ao resolver parâmetros: {e}",
+                        ).model_dump(),
+                    )
 
                 # Verificar se há candidatos ambíguos ou vazios
                 for param_name, candidates in lookup_results.items():
@@ -214,6 +224,25 @@ class IntentRouter(APIRouter):
                         audit_id=audit_id,
                     ).model_dump(),
                 )
+            except ValidationError as e:
+                error_msg = "; ".join(
+                    f"{' -> '.join(str(l) for l in err['loc'])}: {err['msg']}"
+                    for err in e.errors()
+                )
+                if self.auditor and audit_id:
+                    audit = self.auditor.get(audit_id)
+                    if audit:
+                        audit.error = error_msg
+
+                return JSONResponse(
+                    status_code=422,
+                    content=IntentResponse(
+                        success=False,
+                        resolution=resolution,
+                        error=f"Payload inválido: {error_msg}",
+                        audit_id=audit_id,
+                    ).model_dump(),
+                )
             except Exception as e:
                 if self.auditor and audit_id:
                     audit = self.auditor.get(audit_id)
@@ -233,10 +262,29 @@ class IntentRouter(APIRouter):
 
 async def _call_handler(entry: IntentEntry, payload: dict) -> Any:
     """Chama o handler do endpoint, instanciando o schema Pydantic se necessário."""
+    import inspect
+
+    from pydantic import ValidationError
+
+    try:
+        if entry.payload_model is not None:
+            model_instance = entry.payload_model(**payload)
+            args = (model_instance,)
+        else:
+            args = ()
+            kwargs = payload
+    except ValidationError:
+        raise  # Re-raise para o caller tratar com status 422
+
+    handler = entry.handler
     if entry.payload_model is not None:
-        model_instance = entry.payload_model(**payload)
-        return await entry.handler(model_instance)
-    return await entry.handler(**payload)
+        result = handler(model_instance)
+    else:
+        result = handler(**payload)
+
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 def _create_backend(name: str) -> LLMBackend:

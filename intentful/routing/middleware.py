@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse
 
 from intentful.core.registry import get_registry
 from intentful.core.schemas import IntentRequest, IntentResponse
-from intentful.routing.lookup import apply_resolved_params, needs_lookup, resolve_lookups
+from intentful.routing.lookup import LookupError, apply_resolved_params, needs_lookup, resolve_lookups
 from intentful.routing.resolver import Resolver
 
 
@@ -91,7 +91,17 @@ class IntentMiddleware(BaseHTTPMiddleware):
 
         # --- Two-step lookup resolution ---
         if needs_lookup(resolution, entry):
-            lookup_results = await resolve_lookups(resolution, entry)
+            try:
+                lookup_results = await resolve_lookups(resolution, entry)
+            except LookupError as e:
+                return JSONResponse(
+                    status_code=502,
+                    content=IntentResponse(
+                        success=False,
+                        resolution=resolution,
+                        error=f"Erro ao resolver parâmetros: {e}",
+                    ).model_dump(),
+                )
 
             for param_name, candidates in lookup_results.items():
                 if len(candidates) == 0:

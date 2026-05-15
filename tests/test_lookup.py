@@ -277,7 +277,9 @@ async def test_resolve_lookups_missing_config():
 
 @pytest.mark.asyncio
 async def test_resolve_lookups_resolver_error():
-    """Erro no resolver_fn devolve lista vazia."""
+    """Erro no resolver_fn propaga LookupError."""
+    from intentful.routing.lookup import LookupError
+
     config = LookupConfig(
         search_fields=["customer_name"],
         resolver_fn=fake_search_error,
@@ -301,8 +303,8 @@ async def test_resolve_lookups_resolver_error():
         lookups={"order_id": config},
     )
 
-    results = await resolve_lookups(resolution, entry)
-    assert results["order_id"] == []
+    with pytest.raises(LookupError, match="Database connection failed"):
+        await resolve_lookups(resolution, entry)
 
 
 # --- Testes unitários: apply_resolved_params ---

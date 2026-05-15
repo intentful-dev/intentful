@@ -57,6 +57,10 @@ async def resolve_lookups(
     return results
 
 
+class LookupError(Exception):
+    """Erro ao executar lookup de parâmetros."""
+
+
 async def _execute_lookup(
     config: LookupConfig,
     search_values: dict[str, Any],
@@ -66,7 +70,7 @@ async def _execute_lookup(
         raw_results = await config.resolver_fn(search_values)
     except Exception as e:
         logger.error("Erro ao executar lookup: %s", e)
-        return []
+        raise LookupError(f"Erro ao executar lookup: {e}") from e
 
     candidates: list[LookupCandidate] = []
     for row in raw_results:

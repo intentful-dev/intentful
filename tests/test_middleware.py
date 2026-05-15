@@ -171,13 +171,14 @@ async def test_middleware_low_confidence_rejected(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_middleware_unknown_endpoint(client: AsyncClient):
-    """Endpoint resolvido que não está no registry dá 404."""
+    """Endpoint resolvido que não está no registry é rejeitado com confiança 0."""
     response = await client.post("/items", json={
         "prompt": "Endpoint fantasma inexistente",
     })
     data = response.json()
-    assert response.status_code == 404
-    assert "não encontrado" in data["error"]
+    assert response.status_code == 422
+    assert data["success"] is False
+    assert "Confiança insuficiente" in data["error"]
 
 
 @pytest.mark.asyncio

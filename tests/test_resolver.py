@@ -67,7 +67,7 @@ def test_build_resolution_prompt_includes_language():
     request = IntentRequest(prompt="Create classes", language="en")
     prompt = build_resolution_prompt(request, registry)
 
-    assert "language: en" in prompt
+    assert 'language="en"' in prompt
     assert "Create classes" in prompt
 
 
@@ -123,6 +123,9 @@ async def test_resolver_valid_response():
 
 @pytest.mark.asyncio
 async def test_resolver_with_lookup_hints():
+    async def fake_fn(hints):
+        return []
+
     response = json.dumps({
         "endpoint": "/orders/{order_id}",
         "method": "DELETE",
@@ -133,7 +136,20 @@ async def test_resolver_with_lookup_hints():
         ],
     })
     resolver = LLMResolver(FakeBackend(response))
-    registry = _make_registry()
+    registry = IntentRegistry()
+    registry.register(IntentEntry(
+        endpoint_path="/orders/{order_id}",
+        method="DELETE",
+        description="Apagar encomenda",
+        context=IntentContext(),
+        handler=lambda: None,
+        lookups={
+            "order_id": LookupConfig(
+                search_fields=["customer_name"],
+                resolver_fn=fake_fn,
+            )
+        },
+    ))
     request = IntentRequest(prompt="Apaga encomenda do João")
 
     result = await resolver.resolve(request, registry)

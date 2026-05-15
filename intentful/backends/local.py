@@ -12,7 +12,13 @@ class OllamaBackend(LLMBackend):
         model: str = "llama3",
         base_url: str = "http://localhost:11434",
     ) -> None:
-        import httpx
+        try:
+            import httpx
+        except ImportError:
+            raise ImportError(
+                "O pacote 'httpx' é necessário para usar o OllamaBackend. "
+                "Instale com: pip install intentful[ollama]"
+            )
 
         self.model = model
         self.base_url = base_url
