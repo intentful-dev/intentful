@@ -6,15 +6,13 @@ import json
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from pydantic import BaseModel, Field
 
 from intentful.backends import LLMBackend
 from intentful.core.context import IntentContext
 from intentful.core.decorator import intent
-from intentful.core.registry import IntentEntry, IntentRegistry, get_registry
+from intentful.core.registry import IntentEntry, get_registry
 from intentful.core.schemas import (
     IntentResolution,
-    LookupCandidate,
     LookupConfig,
     LookupHint,
 )

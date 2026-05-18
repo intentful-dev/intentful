@@ -4,7 +4,6 @@ import json
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from pydantic import BaseModel, Field
 
 from intentful.backends import LLMBackend
 from intentful.core.context import IntentContext

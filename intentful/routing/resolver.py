@@ -6,10 +6,10 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-logger = logging.getLogger("intentful.resolver")
-
 from intentful.core.registry import IntentRegistry
 from intentful.core.schemas import IntentRequest, IntentResolution, LookupHint
+
+logger = logging.getLogger("intentful.resolver")
 
 
 RESOLVER_SYSTEM_PROMPT = """You are an intent resolver for a backend API system.

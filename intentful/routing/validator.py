@@ -67,7 +67,7 @@ def _validate_against_schema(payload: dict, entry: IntentEntry) -> list[str]:
                 annotation.model_validate(payload)
             except ValidationError as e:
                 for err in e.errors():
-                    loc = " -> ".join(str(l) for l in err["loc"])
+                    loc = " -> ".join(str(part) for part in err["loc"])
                     errors.append(f"Validação falhou em '{loc}': {err['msg']}")
             break
     return errors

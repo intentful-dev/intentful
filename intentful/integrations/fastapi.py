@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from intentful.backends import LLMBackend
 from intentful.backends.anthropic import AnthropicBackend
@@ -226,7 +226,7 @@ class IntentRouter(APIRouter):
                 )
             except ValidationError as e:
                 error_msg = "; ".join(
-                    f"{' -> '.join(str(l) for l in err['loc'])}: {err['msg']}"
+                    f"{' -> '.join(str(loc) for loc in err['loc'])}: {err['msg']}"
                     for err in e.errors()
                 )
                 if self.auditor and audit_id:
@@ -269,10 +269,9 @@ async def _call_handler(entry: IntentEntry, payload: dict) -> Any:
     try:
         if entry.payload_model is not None:
             model_instance = entry.payload_model(**payload)
-            args = (model_instance,)
+            pass
         else:
-            args = ()
-            kwargs = payload
+            pass
     except ValidationError:
         raise  # Re-raise para o caller tratar com status 422
 

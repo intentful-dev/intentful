@@ -10,7 +10,6 @@ from intentful.core.schemas import (
     IntentResolution,
     LookupCandidate,
     LookupConfig,
-    LookupHint,
 )
 
 logger = logging.getLogger("intentful.lookup")
