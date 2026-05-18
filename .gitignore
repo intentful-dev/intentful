@@ -18,3 +18,4 @@ env/
 htmlcov/
 .~lock.*
 test.txt
+intentful_plan.md
