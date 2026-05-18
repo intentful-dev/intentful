@@ -16,3 +16,5 @@ env/
 *.so
 .coverage
 htmlcov/
+.~lock.*
+test.txt
