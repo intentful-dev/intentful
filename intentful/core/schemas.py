@@ -1,7 +1,7 @@
 # intentful/core/schemas.py — Schemas partilhados para requests e responses de intent
 from __future__ import annotations
 
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, Literal
 
 from pydantic import BaseModel, Field
 
@@ -62,6 +62,12 @@ class IntentRequest(BaseModel):
     dry_run: bool = Field(default=False, description="Se True, simula sem executar")
     language: str = Field(default="pt", description="Língua do prompt (ISO 639-1)")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata adicional")
+    mode: Literal["single", "conversational"] = Field(
+        default="single", description="Modo de interaccao: single (prompt unico) ou conversational (faseado)"
+    )
+    session_id: str | None = Field(
+        default=None, description="ID da sessao conversacional (para continuar uma conversa)"
+    )
 
 
 class IntentResolution(BaseModel):
@@ -83,6 +89,16 @@ class IntentResolution(BaseModel):
     )
 
 
+class ValidationDetail(BaseModel):
+    """Detalhes estruturados de validacao inteligente."""
+
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    invalid_fields: dict[str, str] = Field(default_factory=dict)
+    suggestion: str | None = None
+
+
 class IntentResponse(BaseModel):
     """Response devolvido ao utilizador após uma operação via intent."""
 
@@ -94,3 +110,26 @@ class IntentResponse(BaseModel):
     error: str | None = None
     audit_id: str | None = None
     lookup_results: dict[str, list[LookupCandidate]] | None = None
+    validation_details: ValidationDetail | None = None
+    suggestion: str | None = None
+
+
+class ConversationResponse(BaseModel):
+    """Response para turnos do modo conversacional."""
+
+    session_id: str = Field(..., description="ID da sessao conversacional")
+    status: Literal["resolving", "collecting", "ready", "completed", "expired"] = Field(
+        ..., description="Estado actual da conversa"
+    )
+    question: str | None = Field(
+        default=None, description="Proxima pergunta a fazer ao utilizador"
+    )
+    collected_fields: dict[str, Any] = Field(
+        default_factory=dict, description="Campos ja recolhidos"
+    )
+    pending_field: str | None = Field(
+        default=None, description="Campo actualmente a ser recolhido"
+    )
+    resolution: IntentResolution | None = None
+    result: Any = None
+    error: str | None = None

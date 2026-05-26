@@ -12,12 +12,14 @@ from pydantic import ValidationError
 from intentful.backends import LLMBackend
 from intentful.backends.anthropic import AnthropicBackend
 from intentful.core.registry import IntentEntry, get_registry
-from intentful.core.schemas import IntentRequest, IntentResponse
+from intentful.conversation.resolver import ConversationalResolver
+from intentful.conversation.store import InMemorySessionStore
+from intentful.core.schemas import ConversationResponse, IntentRequest, IntentResponse, ValidationDetail
 from intentful.execution.auditor import AuditEntry, Auditor
 from intentful.routing.middleware import IntentMiddleware
 from intentful.routing.resolver import LLMResolver
 from intentful.routing.lookup import LookupError, apply_resolved_params, needs_lookup, resolve_lookups
-from intentful.routing.validator import validate_resolution
+from intentful.routing.smart_validation import SmartValidationResult, smart_validate
 
 
 class IntentRouter(APIRouter):
@@ -56,6 +58,8 @@ class IntentRouter(APIRouter):
             self.backend = ai_backend
 
         self.resolver = LLMResolver(self.backend)
+        self.session_store = InMemorySessionStore()
+        self.conversational_resolver = ConversationalResolver(self.backend)
         self._add_intent_endpoint()
 
     def _add_intent_endpoint(self) -> None:
@@ -73,6 +77,8 @@ class IntentRouter(APIRouter):
                 dry_run=body.get("dry_run", False),
                 language=body.get("language", self.language[0]),
                 metadata=body.get("metadata", {}),
+                mode=body.get("mode", "single"),
+                session_id=body.get("session_id"),
             )
 
             registry = get_registry()
@@ -84,6 +90,10 @@ class IntentRouter(APIRouter):
                         error="Nenhum endpoint registado com @intent.",
                     ).model_dump(),
                 )
+
+            # --- Modo conversacional ---
+            if intent_request.mode == "conversational":
+                return await self._handle_conversational(intent_request, body)
 
             resolution = await self.resolver.resolve(intent_request, registry)
 
@@ -111,15 +121,29 @@ class IntentRouter(APIRouter):
                     ).model_dump(),
                 )
 
-            # Validar o payload contra as regras do endpoint
-            validation = validate_resolution(resolution, entry)
-            if not validation.valid:
+            # Validar o payload contra as regras do endpoint (smart validation)
+            smart_result: SmartValidationResult = await smart_validate(
+                resolution,
+                entry,
+                backend=self.backend,
+                language=intent_request.language,
+            )
+            if not smart_result.valid:
+                detail = ValidationDetail(
+                    valid=False,
+                    errors=smart_result.errors,
+                    missing_fields=smart_result.missing_fields,
+                    invalid_fields=smart_result.invalid_fields,
+                    suggestion=smart_result.suggestion,
+                )
                 return JSONResponse(
                     status_code=422,
                     content=IntentResponse(
                         success=False,
                         resolution=resolution,
-                        error="Validação falhou: " + "; ".join(validation.errors),
+                        error="Validação falhou: " + "; ".join(smart_result.errors),
+                        validation_details=detail,
+                        suggestion=smart_result.suggestion,
                     ).model_dump(),
                 )
 
@@ -258,6 +282,80 @@ class IntentRouter(APIRouter):
                         audit_id=audit_id,
                     ).model_dump(),
                 )
+
+
+    async def _handle_conversational(
+        self, intent_request: IntentRequest, body: dict
+    ) -> JSONResponse:
+        """Trata pedidos no modo conversacional (faseado)."""
+        session_id = intent_request.session_id
+
+        if session_id is not None:
+            # Continuar sessao existente
+            session = await self.session_store.get(session_id)
+            if session is None:
+                return JSONResponse(
+                    status_code=404,
+                    content=ConversationResponse(
+                        session_id=session_id,
+                        status="expired",
+                        error="Sessao nao encontrada ou expirada.",
+                        collected_fields={},
+                    ).model_dump(),
+                )
+
+            session = await self.conversational_resolver.continue_session(
+                session, intent_request.prompt
+            )
+        else:
+            # Iniciar nova sessao
+            session = await self.conversational_resolver.start_session(
+                intent_request.prompt,
+                language=intent_request.language,
+            )
+
+        await self.session_store.save(session)
+
+        # Extrair a ultima mensagem do assistant como pergunta
+        question = None
+        for turn in reversed(session.history):
+            if turn.role == "assistant":
+                question = turn.content
+                break
+
+        current_field_name = None
+        if session.current_field:
+            current_field_name = session.current_field.name
+
+        # Se pronto para executar, executar o handler
+        result = None
+        if session.status == "ready" and not intent_request.dry_run:
+            entry = get_registry().get(session.method, session.endpoint_path)
+            if entry is not None:
+                try:
+                    result = await _call_handler(entry, session.collected_fields)
+                    session.status = "completed"
+                    await self.session_store.save(session)
+                except Exception as e:
+                    return JSONResponse(
+                        status_code=500,
+                        content=ConversationResponse(
+                            session_id=session.session_id,
+                            status=session.status,
+                            error=f"Erro ao executar: {e}",
+                            collected_fields=session.collected_fields,
+                        ).model_dump(),
+                    )
+
+        response = ConversationResponse(
+            session_id=session.session_id,
+            status=session.status,
+            question=question,
+            collected_fields=session.collected_fields,
+            pending_field=current_field_name,
+            result=result,
+        )
+        return JSONResponse(content=response.model_dump())
 
 
 async def _call_handler(entry: IntentEntry, payload: dict) -> Any:
